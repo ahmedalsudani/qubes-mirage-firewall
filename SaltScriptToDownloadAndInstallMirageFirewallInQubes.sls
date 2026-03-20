@@ -1,5 +1,6 @@
 # How to install the superlight mirage-firewall for Qubes OS by using saltstack
-# Tested on Qubes v4.1 and mirage v0.8.5
+# Tested on Qubes v4.3 and mirage v0.9.5
+# Integrity checks are using sha256 from github. Latest release version of mirage is downloaded and installed into dom0.
 # After the install, you have to switch your AppVMs to use the mirage firewall vm created by this script e.g. by using "Qubes Global Settings"
 # inspired by: https://github.com/one7two99/my-qubes/tree/master/mirage-firewall
 
@@ -10,14 +11,13 @@
 {% set DownloadVM = "DownloadVmMirage" %}
 {% set MirageFW = "sys-mirage-fw" %}
 {% set GithubUrl = "https://github.com/mirage/qubes-mirage-firewall" %}
-{% set Kernel = "qubes-firewall.xen" %}
+{% set KernelFileName = "qubes-firewall.xen" %}
 {% set Shasum = "qubes-firewall-release.sha256" %}
 {% set MirageInstallDir = "/var/lib/qubes/vm-kernels/mirage-firewall" %}
 
-#download and install the latest version
 {% set Release = salt['cmd.shell']("qvm-run --dispvm " ~ DispVM ~ " --pass-io \"curl --silent --location -o /dev/null -w %{url_effective} " ~ GithubUrl ~ "/releases/latest | rev | cut -d \"/\" -f 1 | rev\"") %}
 
-{% if Release != salt['cmd.shell']("test -e " ~ MirageInstallDir ~ "/version.txt" ~ " || mkdir " ~ MirageInstallDir ~ " ; touch " ~ MirageInstallDir ~ "/version.txt" ~ " ; cat " ~ MirageInstallDir ~ "/version.txt") %}
+{% if Release != salt['cmd.shell']("[ ! -f " ~ MirageInstallDir ~ "/version.txt" ~ " ] && mkdir -p " ~ MirageInstallDir ~ " && touch " ~ MirageInstallDir ~ "/version.txt" ~ " ; cat " ~ MirageInstallDir ~ "/version.txt") %}
 
 create-downloader-VM:
   qvm.vm:
@@ -29,7 +29,7 @@ create-downloader-VM:
        - template: {{ DownloadVMTemplate }}
        - include-in-backups: false
 
-{% set DownloadBinary = GithubUrl ~ "/releases/download/" ~ Release ~ "/" ~ Kernel %}
+{% set DownloadBinary = GithubUrl ~ "/releases/download/" ~ Release ~ "/" ~ KernelFileName %}
 {% set DownloadShasum = GithubUrl ~ "/releases/download/" ~ Release ~ "/" ~ Shasum %}
 
 download-and-unpack-in-DownloadVM4mirage:
@@ -45,14 +45,14 @@ check-checksum-in-DownloadVM:
   cmd.run: 
     - names:
       - qvm-run --pass-io {{ DownloadVM }} {{ "\"echo \\\"Checksum of release on github:\\\";cat " ~ Shasum ~ " | cut -d\' \' -f1\"" }}
-      - qvm-run --pass-io {{ DownloadVM }} {{ "\"echo \\\"Checksum of downloaded local file:\\\";sha256sum " ~ Kernel ~ " | cut -d\' \' -f1\"" }}
-      - qvm-run --pass-io {{ DownloadVM }} {{ "\"diff <(cat " ~ Shasum ~ " | cut -d\' \' -f1) <(sha256sum " ~ Kernel ~ " | cut -d\' \' -f1) && echo \\\"Checksums DO match.\\\" || (echo \\\"Checksums do NOT match.\\\";exit 101)\"" }}
+      - qvm-run --pass-io {{ DownloadVM }} {{ "\"echo \\\"Checksum of downloaded local file:\\\";sha256sum " ~ KernelFileName ~ " | cut -d\' \' -f1\"" }}
+      - qvm-run --pass-io {{ DownloadVM }} {{ "\"diff <(cat " ~ Shasum ~ " | cut -d\' \' -f1) <(sha256sum " ~ KernelFileName ~ " | cut -d\' \' -f1) && echo \\\"Checksums DO match.\\\" || (echo \\\"Checksums do NOT match.\\\";exit 101)\"" }}
     - require: 
       - download-and-unpack-in-DownloadVM4mirage
 
 copy-mirage-kernel-to-dom0:
   cmd.run: 
-    - name: mkdir -p {{ MirageInstallDir }}; qvm-run --pass-io --no-gui {{ DownloadVM }} {{ "cat " ~ Kernel }} > {{ MirageInstallDir ~ "/vmlinuz" }}
+    - name: mkdir -p {{ MirageInstallDir }}; qvm-run --pass-io --no-gui {{ DownloadVM }} {{ "cat " ~ KernelFileName }} > {{ MirageInstallDir ~ "/vmlinuz" }}
     - require: 
       - download-and-unpack-in-DownloadVM4mirage
       - check-checksum-in-DownloadVM
@@ -93,7 +93,7 @@ create-sys-mirage-fw:
 cleanup-in-DownloadVM:
   cmd.run:
    - names:
-      - qvm-run -a --pass-io --no-gui {{ DownloadVM }} "{{ "rm " ~ Kernel ~ " " ~ Shasum }}"
+      - qvm-run -a --pass-io --no-gui {{ DownloadVM }} "{{ "rm " ~ KernelFileName ~ " " ~ Shasum }}"
    - require: 
      - update-version 
 
