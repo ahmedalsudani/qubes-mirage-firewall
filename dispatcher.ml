@@ -313,8 +313,8 @@ let client_handle_arp ~fixed_arp ~iface request =
               Lwt.return_unit))
 
 (** Handle an IPv4 packet from the client. *)
-let client_handle_ipv4 get_ts cache ~iface ~router dns_client dns_servers packet
-    =
+let client_handle_ipv4 get_ts cache ~pipeline ~iface ~router dns_client
+    dns_servers packet =
   let cache', r = Nat_packet.of_ipv4_packet !cache ~now:(get_ts ()) packet in
   cache := cache';
   match r with
@@ -326,11 +326,16 @@ let client_handle_ipv4 get_ts cache ~iface ~router dns_client dns_servers packet
   | Ok (Some packet) ->
       let (`IPv4 (ip, _)) = packet in
       let src = ip.Ipv4_packet.src in
+      (* Parsing and the fragment-cache update above run synchronously, in
+         receive order. The forwarding - whose transmit blocks on a ring
+         round-trip - is handed to the pipeline so the receive loop can move on
+         to the next frame instead of stalling one packet per round-trip. *)
       if src = iface#other_ip then
-        ipv4_from_client dns_client dns_servers router ~src:iface packet
+        Pipeline.submit pipeline (fun () ->
+            ipv4_from_client dns_client dns_servers router ~src:iface packet)
       else if iface#other_ip = router.config.netvm_ip then
         (* This can occurs when used with *BSD as netvm (and a gateway is set) *)
-        ipv4_from_netvm router packet
+        Pipeline.submit pipeline (fun () -> ipv4_from_netvm router packet)
       else (
         Log.warn (fun f ->
             f "Incorrect source IP %a in IP packet from %a (dropping)"
@@ -375,6 +380,9 @@ let conf_vif get_ts vif backend client_eth dns_client dns_servers ~client_ip
 
   let fixed_arp = Client_eth.ARP.create ~net:client_eth iface in
   let fragment_cache = ref (Fragments.Cache.empty (256 * 1024)) in
+  (* Forward several frames concurrently so this client's traffic is not capped
+     at one packet per transmit round-trip. *)
+  let pipeline = Pipeline.create ~max_in_flight:Pipeline.default_in_flight in
   let listener =
     Lwt.catch
       (fun () ->
@@ -388,8 +396,8 @@ let conf_vif get_ts vif backend client_eth dns_client dns_servers ~client_ip
                 match eth.Ethernet.Packet.ethertype with
                 | `ARP -> client_handle_arp ~fixed_arp ~iface payload
                 | `IPv4 ->
-                    client_handle_ipv4 get_ts fragment_cache ~iface ~router
-                      dns_client dns_servers payload
+                    client_handle_ipv4 get_ts fragment_cache ~pipeline ~iface
+                      ~router dns_client dns_servers payload
                 | `IPv6 -> Lwt.return_unit (* TODO: oh no! *)))
         >|= or_raise "Listen on client interface" Netback.pp_error)
       (function Lwt.Canceled -> Lwt.return_unit | e -> Lwt.fail e)
@@ -507,6 +515,9 @@ let rec uplink_listen get_ts dns_responses router =
           f "Uplink is connected but not found in the router, retrying...%!");
       uplink_listen get_ts dns_responses router
   | Some uplink ->
+      (* Forward several frames concurrently so inbound traffic is not capped at
+         one packet per transmit round-trip. *)
+      let pipeline = Pipeline.create ~max_in_flight:Pipeline.default_in_flight in
       let listen =
         Lwt.catch
           (fun () ->
@@ -542,7 +553,9 @@ let rec uplink_listen get_ts dns_responses router =
                                   header.dst_port);
                             Lwt_mvar.put dns_responses
                               (header, Cstruct.to_string packet)
-                        | _ -> ipv4_from_netvm router (`IPv4 (header, packet))))
+                        | _ ->
+                            Pipeline.submit pipeline (fun () ->
+                                ipv4_from_netvm router (`IPv4 (header, packet)))))
                   ~ipv6:(fun _ip -> Lwt.return_unit)
                   frame)
             >|= or_raise "Uplink listen loop" Netif.pp_error)

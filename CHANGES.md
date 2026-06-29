@@ -1,3 +1,12 @@
+### unreleased
+
+- Pipeline packet forwarding so a single flow is no longer limited to one packet
+  per transmit round-trip. Frames are now parsed synchronously (preserving
+  order) and forwarded through a bounded-concurrency pipeline, letting several
+  transmits be in flight at once instead of stalling the receive loop on each
+  event-channel round-trip. Backpressure is applied once the pipeline is full
+  rather than dropping frames (`pipeline.ml`).
+
 ### 0.9.5 (2025-10-29)
 
 - Update ARP entry behavior: the unikernel now responds with its MAC address for every APR request from a client. This fixes issues with some VPN clients (#221, @palainp, reviewed by @hannesm, fix confirmed by @pprudev).
