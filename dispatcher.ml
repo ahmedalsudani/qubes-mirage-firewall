@@ -517,7 +517,9 @@ let rec uplink_listen get_ts dns_responses router =
   | Some uplink ->
       (* Forward several frames concurrently so inbound traffic is not capped at
          one packet per transmit round-trip. *)
-      let pipeline = Pipeline.create ~max_in_flight:Pipeline.default_in_flight in
+      let pipeline =
+        Pipeline.create ~max_in_flight:Pipeline.default_in_flight
+      in
       let listen =
         Lwt.catch
           (fun () ->
@@ -555,7 +557,8 @@ let rec uplink_listen get_ts dns_responses router =
                               (header, Cstruct.to_string packet)
                         | _ ->
                             Pipeline.submit pipeline (fun () ->
-                                ipv4_from_netvm router (`IPv4 (header, packet)))))
+                                ipv4_from_netvm router (`IPv4 (header, packet)))
+                        ))
                   ~ipv6:(fun _ip -> Lwt.return_unit)
                   frame)
             >|= or_raise "Uplink listen loop" Netif.pp_error)
