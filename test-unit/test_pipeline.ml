@@ -93,8 +93,8 @@ let test_exception_isolated _switch () =
       Lwt.return_unit)
   >>= fun () ->
   settle () >>= fun () ->
-  Alcotest.(check bool) "slot freed after exception; next operation ran" true
-    !ran;
+  Alcotest.(check bool)
+    "slot freed after exception; next operation ran" true !ran;
   Lwt.return_unit
 
 let test_create_invalid _switch () =
